@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Centre de Contrôle & Visioconférence</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 15px; display: flex; flex-direction: column; align-items: center; }
+        h1 { color: #38bdf8; margin: 0 0 15px 0; font-size: 1.6rem; text-align: center; }
+        
+        .header-status { background: #1e293b; padding: 10px 20px; border-radius: 8px; margin-bottom: 15px; width: 100%; max-width: 1300px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .badge { background: #10b981; color: white; padding: 4px 10px; border-radius: 20px; font-weight: bold; font-size: 0.85rem; }
+
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+        button { background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background: #0369a1; }
+        button.active { background: #16a34a; }
+
+        .main-container { display: flex; gap: 15px; width: 100%; max-width: 1300px; flex-wrap: wrap; }
+        
+        /* Zone vidéo principale */
+        .video-section { flex: 3; min-width: 320px; display: flex; flex-direction: column; gap: 15px; }
+        .screen-box { background: #1e293b; padding: 15px; border-radius: 10px; position: relative; }
+        .screen-box h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; }
+        
+        /* Conteneur vidéo interactif pour le contrôle à distance */
+        .video-wrapper { position: relative; width: 100%; background: #000; border-radius: 8px; overflow: hidden; }
+        video#remoteVideo { width: 100%; display: block; object-fit: contain; max-height: 500px; cursor: crosshair; }
+        
+        /* Petite boîte pour les caméras */
+        .cameras-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+        .cam-card { flex: 1; min-width: 140px; background: #0f172a; padding: 8px; border-radius: 8px; border: 1px solid #334155; }
+        .cam-card h4 { margin: 0 0 5px 0; font-size: 0.8rem; color: #38bdf8; }
+        video.cam-video { width: 100%; height: 120px; background: #000; border-radius: 4px; object-fit: cover; }
+
+        /* Panneau latéral : Participants & Tchat */
+        .sidebar { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 15px; }
+        .panel { background: #1e293b; padding: 15px; border-radius: 10px; }
+        .panel h3 { margin-top: 0; color: #f1f5f9; font-size: 1rem; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+        
+        .user-list { list-style: none; padding: 0; margin: 0; max-height: 120px; overflow-y: auto; }
+        .user-list li { padding: 6px 0; border-bottom: 1px solid #334155; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; }
+        .user-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; }
+
+        .chat-messages { height: 220px; background: #0f172a; border-radius: 6px; padding: 10px; overflow-y: auto; font-size: 0.85rem; margin-bottom: 10px; }
+        .chat-input { display: flex; gap: 5px; }
+        .chat-input input { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid #475569; background: #334155; color: white; }
+    </style>
+</head>
+<body>
+
+    <h1>🌍 Bureau à Distance & Visioconférence</h1>
+
+    <div class="header-status">
+        <div>
+            Status : <span class="badge" id="connectionStatus">Connecté</span>
+        </div>
+        <div class="controls">
+            <button id="shareScreenBtn">🖥️ Partager mon Écran</button>
+            <button id="connectRemoteBtn">🔗 Recevoir le Bureau</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Section Vidéo / Écran Distant -->
+        <div class="video-section">
+            <div class="screen-box">
+                <h3>🖥️ Écran Partagé / Bureau à Distance (Clique pour interagir)</h3>
+                <div class="video-wrapper">
+                    <video id="remoteVideo" autoplay playsinline></video>
+                </div>
+            </div>
+
+            <!-- Caméras en Direct -->
+            <div class="cameras-grid">
+                <div class="cam-card">
+                    <h4>Ma Caméra (Auto)</h4>
+                    <video id="localCam" class="cam-video" autoplay playsinline muted></video>
+                </div>
+            </div>
+        </div>
+
+        <!-- Panneau Latéral : Participants & Chat -->
+        <div class="sidebar">
+            <div class="panel">
+                <h3>👥 Participants Connectés (<span id="userCount">1</span>)</h3>
+                <ul class="user-list" id="userList">
+                    <li><span class="user-dot"></span> Vous (Moi)</li>
+                </ul>
+            </div>
+
+            <div class="panel">
+                <h3>💬 Discussion en Direct</h3>
+                <div class="chat-messages" id="chatMessages"></div>
+                <div class="chat-input">
+                    <input type="text" id="msgInput" placeholder="Message ou consigne...">
+                    <button id="sendBtn">Envoi</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Socket.io -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let peerConnection;
+        let localCamStream;
+        const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+        const localCam = document.getElementById('localCam');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const shareScreenBtn = document.getElementById('shareScreenBtn');
+        const connectRemoteBtn = document.getElementById('connectRemoteBtn');
+        const chatMessages = document.getElementById('chatMessages');
+        const msgInput = document.getElementById('msgInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const userList = document.getElementById('userList');
+        const userCount = document.getElementById('userCount');
+
+        // 1. ACTIVATION AUTOMATIQUE DE LA CAMÉRA DÈS L'OUVERTURE DE LA PAGE
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                localCamStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localCam.srcObject = localCamStream;
+            } catch (err) {
+                console.warn("Caméra ou micro non accessible automatiquement :", err);
+            }
+        });
+
+        // 2. GESTION DU PARTAGE D'ÉCRAN
+        shareScreenBtn.onclick = async () => {
+            try {
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: "always" }, audio: true });
+                
+                peerConnection = new RTCPeerConnection(servers);
+                screenStream.getTracks().forEach(track => peerConnection.addTrack(track, screenStream));
+
+                peerConnection.onicecandidate = (e) => e.candidate && socket.emit('signal', { candidate: e.candidate });
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                socket.emit('signal', { offer: offer });
+
+                shareScreenBtn.classList.add('active');
+                shareScreenBtn.innerText = "Écran en cours de partage...";
+            } catch (err) {
+                console.error("Erreur partage d'écran :", err);
+            }
+        };
+
+        // 3. CONNEXION ET RÉCEPTION DU FLUX DISTANT
+        connectRemoteBtn.onclick = () => {
+            peerConnection = new RTCPeerConnection(servers);
+            peerConnection.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
+            peerConnection.onicecandidate = (e) => e.candidate && socket.emit('signal', { candidate: e.candidate });
+            connectRemoteBtn.innerText = "Connexion établie";
+        };
+
+        // Signalement WebRTC
+        socket.on('signal', async (data) => {
+            if (!peerConnection) {
+                peerConnection = new RTCPeerConnection(servers);
+                peerConnection.ontrack = (e) => { remoteVideo.srcObject = e.streams[0]; };
+                peerConnection.onicecandidate = (e) => e.candidate && socket.emit('signal', { candidate: e.candidate });
+            }
+
+            if (data.offer) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                socket.emit('signal', { answer: answer });
+            } else if (data.answer) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+            } else if (data.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        });
+
+        // 4. CONTRÔLE À DISTANCE : Envoi des clics (PC ou Téléphone)
+        remoteVideo.addEventListener('click', (e) => {
+            const rect = remoteVideo.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / remoteVideo.clientWidth;
+            const y = (e.clientY - rect.top) / remoteVideo.clientHeight;
+
+            socket.emit('remote-action', { type: 'click', x: x, y: y });
+        });
+
+        socket.on('remote-action', (action) => {
+            if (action.type === 'click') {
+                console.log(`Clic distant reçu aux coordonnées relatives : X=${(action.x * 100).toFixed(1)}%, Y=${(action.y * 100).toFixed(1)}%`);
+            }
+        });
+
+        // 5. GESTION DE LA LISTE DES PARTICIPANTS CONNECTÉS
+        socket.on('connect', () => {
+            // Ajouter dynamiquement l'utilisateur à la liste
+            const li = document.createElement('li');
+            li.id = socket.id;
+            li.innerHTML = `<span class="user-dot"></span> Participant (${socket.id.substring(0, 5)})`;
+            userList.appendChild(li);
+            updateUserCount();
+        });
+
+        function updateUserCount() {
+            userCount.innerText = userList.children.length;
+        }
+
+        // 6. DISCUSSION TCHAT
+        sendBtn.onclick = () => {
+            if (msgInput.value.trim() !== "") {
+                socket.emit('chat-message', msgInput.value);
+                appendMessage('Moi', msgInput.value);
+                msgInput.value = '';
+            }
+        };
+
+        socket.on('chat-message', (msg) => {
+            appendMessage('Participant', msg);
+        });
+
+        function appendMessage(sender, text) {
+            const div = document.createElement('div');
+            div.innerHTML = `<strong>${sender}:</strong> ${text}`;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    </script>
+</body>
+</html>
